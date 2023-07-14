@@ -20,6 +20,8 @@ from __future__ import annotations
 from typing import TextIO, Optional, Any
 from collections.abc import Iterable, Hashable
 
+from dataclasses import dataclass
+
 import logging
 
 Objective = Any
@@ -50,28 +52,23 @@ class Node:
     def cid(self) -> Hashable:
         return self.get_id()
 
-class Component:
+class Edge:
     def __init__(self,
-                 i: Node,
-                 j: Node,
-                 w: float
+                 i: int,
+                 j: int
                  ) -> None:
         super().__init__()
-        self.__i: Node = i if i.get_id() < j.get_id() else j
-        self.__j: Node = j if i.get_id() < j.get_id() else i
-        self.__w: float = w
+        self.__i: int = i if i < j else j
+        self.__j: int = j if i < j else i
     
-    def get_i(self) -> Node:
+    def get_i(self) -> int:
         return self.__i
     
-    def get_j(self) -> Node:
+    def get_j(self) -> int:
         return self.__j
     
-    def get_w(self) -> float:
-        return self.__w
-    
     def __str__(self) -> str:
-        return "<"+str(self.get_i())+","+str(self.get_j())+","+str(self.get_w())+">"
+        return "<"+str(self.get_i())+","+str(self.get_j())+">"
     
     def __repr__(self) -> str:
         return str(self)
@@ -80,11 +77,20 @@ class Component:
         return hash(str(self))
     
     def __eq__(self, __value: object) -> bool:
-        return self.get_i() == __value.get_i() and self.get_j() == __value.get_j() and self.get_w() == __value.get_w()
+        return self.get_i() == __value.get_i() and self.get_j() == __value.get_j()
 
     @property
     def cid(self) -> Hashable:
-        return self.get_i(), self.get_j(), self.get_w()
+        return self.get_i(), self.get_j()
+    
+@dataclass
+class Component:
+    u: int
+    v: int
+
+    @property
+    def cid(self) -> Hashable:
+        return self.u, self.v
     
 # class Component:
 #     @property
@@ -100,12 +106,40 @@ class Solution:
                 community_structure: list[int]) -> None:
         self.problem = problem
         self.community_structure = community_structure
-        
+        self.community_mappings = {}
+        self.N = self.problem.nnodes
+
+        for i in range(self.N):
+            community_id = self.community_structure[i]
+            if not (community_id in self.community_mappings):
+                self.community_mappings[community_id] = []
+            self.community_mappings[community_id].append(i)
+
+        self.community_edges = {}
+        for i in range(self.N):
+            community_id = self.community_structure[i]
+            if not (community_id in self.community_edges):
+                self.community_edges[community_id] = []
+            row = self.problem.graph[i]
+            neighs = []
+            for j in range(len(row)):
+                weight = row[j]
+                if weight != 0 and self.community_structure[j] == community_id:
+                    neighs.append(Edge(i, j))
+            self.community_edges[community_id].extend(neighs)
+
     def output(self) -> str:
         """
         Generate the output string for this solution
         """
-        raise NotImplementedError
+        output_string = ""
+
+        K = len(self.community_mappings)
+        for i in range(K):
+            output_string += " ".join(self.community_mappings[i])
+            output_string += "\n"
+
+        return output_string
 
     def copy(self) -> Solution:
         """
@@ -114,34 +148,59 @@ class Solution:
         Note: changes to the copy must not affect the original
         solution. However, this does not need to be a deepcopy.
         """
-        raise NotImplementedError
 
+        return Solution(problem=self.problem, community_structure=[val for val in self.community_structure])
+        
     def is_feasible(self) -> bool:
         """
         Return whether the solution is feasible or not
         """
-        raise NotImplementedError
 
-    def objective(self) -> Optional[Objective]:
+        return len(self.community_structure) == self.N
+
+    def objective(self) -> Optional[float]:
         """
         Return the objective value for this solution if defined, otherwise
         should return None
         """
-        raise NotImplementedError
+
+        if self.is_feasible():
+            obj = 0.0
+            K = len(self.community_mappings)
+            for i in range(K):
+                neighs = self.community_edges[i]
+                obj += sum([self.problem.graph[edge.get_i()][edge.get_j()] for edge in neighs])/2.0
+            return -obj
+        else:
+            return None
 
     def lower_bound(self) -> Optional[Objective]:
         """
         Return the lower bound value for this solution if defined,
         otherwise return None
         """
-        raise NotImplementedError
+        bound = 0.0
+        for i in range(self.N):
+            for j in range(i+1, self.N):
+                if self.community_structure[i] == self.community_structure[j]:
+                    bound += self.problem.graph[i][j]
+                else:
+                    if self.problem.graph[i][j] > 0:
+                        bound += self.problem.graph[i][j]
+        return -bound
 
     def add_moves(self) -> Iterable[Component]:
         """
         Return an iterable (generator, iterator, or iterable object)
         over all components that can be added to the solution
         """
-        raise NotImplementedError
+        if len(self.community_structure) == 0:
+            yield Component(0, 0)
+        else:
+            new_node_id = len(self.community_structure)
+            yield Component(new_node_id, max(self.community_structure)+1)
+            for k in range(max(self.community_structure)):
+                yield Component(new_node_id, k)
 
     def local_moves(self) -> Iterable[LocalMove]:
         """
@@ -181,7 +240,21 @@ class Solution:
         Note: this invalidates any previously generated components and
         local moves.
         """
-        raise NotImplementedError
+        node_id, community_id = component.u, component.v
+        self.community_structure[node_id] = community_id
+        if not (community_id in self.community_mappings):
+            self.community_mappings[community_id] = []
+        self.community_mappings[community_id].append(node_id)
+
+        if not (community_id in self.community_edges):
+            self.community_edges[community_id] = []
+        row = self.problem.graph[node_id]
+        neighs = []
+        for j in range(len(row)):
+            weight = row[j]
+            if weight != 0 and self.community_structure[j] == community_id:
+                neighs.append(Edge(node_id, j))
+        self.community_edges[community_id].extend(neighs)
 
     def step(self, lmove: LocalMove) -> None:
         """
@@ -222,18 +295,31 @@ class Solution:
         raise NotImplementedError
 
 class Problem:
+    def __init__(self, graph: list[list[float]]) -> None:
+        self.nnodes = len(graph)
+        self.graph = graph
+        
     @classmethod
     def from_textio(cls, f: TextIO) -> Problem:
         """
         Create a problem from a text I/O source `f`
         """
-        raise NotImplementedError
+        n = int(f.readline())
+        graph: list[list[float]] = [[0 for j in range(n)] for i in range(n)]
+        for i in range(n):
+            l = map(float, f.readline().split())[1:]
+            for j in range(len(l)):
+                graph[i][j] = l[j]
+                graph[j][i] = l[j] 
+
+        return cls(graph)
+
 
     def empty_solution(self) -> Solution:
         """
         Create an empty solution (i.e. with no components).
         """
-        raise NotImplementedError
+        return Solution(self, [])
 
 
 if __name__ == '__main__':
