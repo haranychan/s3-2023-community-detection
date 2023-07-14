@@ -107,7 +107,7 @@ class Solution:
         self.problem = problem
         self.community_structure = community_structure
         self.community_mappings = {}
-        self.N = self.problem.nnodes
+        self.N = len(self.community_structure)
 
         for i in range(self.N):
             community_id = self.community_structure[i]
@@ -300,17 +300,21 @@ class Problem:
         self.graph = graph
         
     @classmethod
-    def from_textio(cls, f: TextIO) -> Problem:
+    def from_textio(cls, f: str) -> Problem:
         """
         Create a problem from a text I/O source `f`
         """
-        n = int(f.readline())
-        graph: list[list[float]] = [[0 for j in range(n)] for i in range(n)]
-        for i in range(n):
-            l = map(float, f.readline().split())[1:]
-            for j in range(len(l)):
-                graph[i][j] = l[j]
-                graph[j][i] = l[j] 
+        with open(f, "r") as file:
+            lines = file.readlines()
+            n = int(lines[0])
+            graph: list[list[float]] = [[0 for j in range(n)] for i in range(n)]
+            t = 1
+            for i in range(n):
+                l = list(map(float, lines[t].split()))[1:]
+                for j in range(len(l)):
+                    graph[i][j] = l[j]
+                    graph[j][i] = l[j]
+                t += 1 
 
         return cls(graph)
 
@@ -341,8 +345,8 @@ if __name__ == '__main__':
                         choices=['bi', 'fi', 'ils', 'rls', 'sa', 'none'],
                         default='none')
     parser.add_argument('--lbudget', type=float, default=5.0)
-    parser.add_argument('--input-file', type=argparse.FileType('r'), default=sys.stdin)
-    parser.add_argument('--output-file', type=argparse.FileType('w'), default=sys.stdout)
+    parser.add_argument('--input-file', default=sys.stdin)
+    parser.add_argument('--output-file', default=sys.stdout)
     args = parser.parse_args()
 
     logging.basicConfig(stream=args.log_file,
