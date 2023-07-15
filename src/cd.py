@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from typing import TextIO, Optional, Any
+from typing import TextIO, Optional, Any, cast
 from collections.abc import Iterable, Hashable
 
 from dataclasses import dataclass
@@ -26,31 +26,31 @@ import logging
 
 Objective = Any
 
-class Node:
-    def __init__(self,
-                 node_id: int
-                 ) -> None:
-        super().__init__()
-        self.__node_id: int = node_id
+# class Node:
+#     def __init__(self,
+#                  node_id: int
+#                  ) -> None:
+#         super().__init__()
+#         self.__node_id: int = node_id
     
-    def get_id(self) -> int:
-        return self.__node_id
+#     def get_id(self) -> int:
+#         return self.__node_id
     
-    def __str__(self) -> str:
-        return str(self.get_id())
+#     def __str__(self) -> str:
+#         return str(self.get_id())
     
-    def __repr__(self) -> str:
-        return str(self)
+#     def __repr__(self) -> str:
+#         return str(self)
     
-    def __hash__(self) -> int:
-        return hash(self.get_id())
+#     def __hash__(self) -> int:
+#         return hash(self.get_id())
     
-    def __eq__(self, __value: object) -> bool:
-        return self.get_id() == __value.get_id()
+#     def __eq__(self, __value: object) -> bool:
+#         return self.get_id() == __value.get_id()
 
-    @property
-    def cid(self) -> Hashable:
-        return self.get_id()
+#     @property
+#     def cid(self) -> Hashable:
+#         return self.get_id()
 
 class Edge:
     def __init__(self,
@@ -85,17 +85,15 @@ class Edge:
     
 @dataclass
 class Component:
+    """
+    Single mapping form u to v, while u is the node id and v is the community id on which u is assigned with this component.
+    """
     u: int
     v: int
 
     @property
     def cid(self) -> Hashable:
         return self.u, self.v
-    
-# class Component:
-#     @property
-#     def cid(self) -> Hashable:
-#         raise NotImplementedError
 
 class LocalMove:
     ...
@@ -107,26 +105,28 @@ class Solution:
         self.problem = problem
         self.community_structure = community_structure
         self.community_mappings = {}
-        self.N = len(self.community_structure)
+        self.community_edges = {}
+        self.partition_size = len(self.community_structure)
+        self.num_communities = 0 if self.community_structure == [] else max(self.community_structure)+1
 
-        for i in range(self.N):
+        for i in range(self.partition_size):
             community_id = self.community_structure[i]
             if not (community_id in self.community_mappings):
-                self.community_mappings[community_id] = []
-            self.community_mappings[community_id].append(i)
+                self.community_mappings[community_id] = set()
+            self.community_mappings[community_id].add(i)
 
-        self.community_edges = {}
-        for i in range(self.N):
+        for i in range(self.partition_size):
             community_id = self.community_structure[i]
             if not (community_id in self.community_edges):
-                self.community_edges[community_id] = []
-            row = self.problem.graph[i]
-            neighs = []
-            for j in range(len(row)):
-                weight = row[j]
-                if weight != 0 and self.community_structure[j] == community_id:
-                    neighs.append(Edge(i, j))
-            self.community_edges[community_id].extend(neighs)
+                self.community_edges[community_id] = set()
+            all_neighs = self.problem.neighbors[i]
+            neighs = set()
+            for j in range(len(all_neighs)):
+                if all_neighs[j] < len(self.community_structure):
+                    if self.community_structure[all_neighs[j]] == community_id:
+                        neighs.add(Edge(i, all_neighs[j]))
+            for nei in neighs:
+                self.community_edges[community_id].add(nei)
 
     def output(self) -> str:
         """
@@ -134,9 +134,8 @@ class Solution:
         """
         output_string = ""
 
-        K = len(self.community_mappings)
-        for i in range(K):
-            output_string += " ".join(self.community_mappings[i])
+        for i in range(self.num_communities):
+            output_string += " ".join([str(val) for val in self.community_mappings[i]])
             output_string += "\n"
 
         return output_string
@@ -148,40 +147,38 @@ class Solution:
         Note: changes to the copy must not affect the original
         solution. However, this does not need to be a deepcopy.
         """
-
         return Solution(problem=self.problem, community_structure=[val for val in self.community_structure])
         
     def is_feasible(self) -> bool:
         """
         Return whether the solution is feasible or not
         """
-
-        return len(self.community_structure) == self.N
+        return self.problem.nnodes == self.partition_size
 
     def objective(self) -> Optional[float]:
         """
         Return the objective value for this solution if defined, otherwise
         should return None
         """
-
         if self.is_feasible():
             obj = 0.0
-            K = len(self.community_mappings)
-            for i in range(K):
+            for i in range(self.num_communities):
                 neighs = self.community_edges[i]
-                obj += sum([self.problem.graph[edge.get_i()][edge.get_j()] for edge in neighs])/2.0
+                obj += sum([self.problem.graph[edge.get_i()][edge.get_j()] for edge in neighs])
             return -obj
         else:
             return None
 
-    def lower_bound(self) -> Optional[Objective]:
+    def lower_bound(self) -> Optional[float]:
         """
         Return the lower bound value for this solution if defined,
         otherwise return None
         """
+        if not self.is_feasible():
+            return None
         bound = 0.0
-        for i in range(self.N):
-            for j in range(i+1, self.N):
+        for i in range(self.partition_size):
+            for j in range(i+1, self.partition_size):
                 if self.community_structure[i] == self.community_structure[j]:
                     bound += self.problem.graph[i][j]
                 else:
@@ -194,13 +191,13 @@ class Solution:
         Return an iterable (generator, iterator, or iterable object)
         over all components that can be added to the solution
         """
-        if len(self.community_structure) == 0:
+        if self.partition_size == 0:
             yield Component(0, 0)
-        else:
-            new_node_id = len(self.community_structure)
-            yield Component(new_node_id, max(self.community_structure)+1)
-            for k in range(max(self.community_structure)):
+        elif self.partition_size < self.problem.nnodes:
+            new_node_id = self.partition_size
+            for k in range(self.num_communities):
                 yield Component(new_node_id, k)
+            yield Component(new_node_id, self.num_communities)
 
     def local_moves(self) -> Iterable[LocalMove]:
         """
@@ -241,20 +238,26 @@ class Solution:
         local moves.
         """
         node_id, community_id = component.u, component.v
-        self.community_structure[node_id] = community_id
+        self.num_communities = max(self.num_communities, community_id+1)
+        if node_id < len(self.community_structure):
+            self.community_structure[node_id] = community_id
+        else:
+            self.partition_size += 1
+            self.community_structure.append(community_id)
         if not (community_id in self.community_mappings):
-            self.community_mappings[community_id] = []
-        self.community_mappings[community_id].append(node_id)
+            self.community_mappings[community_id] = set()
+        self.community_mappings[community_id].add(node_id)
 
         if not (community_id in self.community_edges):
-            self.community_edges[community_id] = []
-        row = self.problem.graph[node_id]
-        neighs = []
-        for j in range(len(row)):
-            weight = row[j]
-            if weight != 0 and self.community_structure[j] == community_id:
-                neighs.append(Edge(node_id, j))
-        self.community_edges[community_id].extend(neighs)
+            self.community_edges[community_id] = set()
+        all_neighs = self.problem.neighbors[node_id]
+        neighs = set()
+        for j in range(len(all_neighs)):
+            if all_neighs[j] < len(self.community_structure):
+                if self.community_structure[all_neighs[j]] == community_id:
+                    neighs.add(Edge(node_id, all_neighs[j]))
+        for nei in neighs:
+            self.community_edges[community_id].add(nei)
 
     def step(self, lmove: LocalMove) -> None:
         """
@@ -265,7 +268,7 @@ class Solution:
         """
         raise NotImplementedError
 
-    def objective_incr_local(self, lmove: LocalMove) -> Optional[Objective]:
+    def objective_incr_local(self, lmove: LocalMove) -> Optional[float]:
         """
         Return the objective value increment resulting from applying a
         local move. If the objective value is not defined after
@@ -273,14 +276,22 @@ class Solution:
         """
         raise NotImplementedError
 
-    def lower_bound_incr_add(self, component: Component) -> Optional[Objective]:
+    def lower_bound_incr_add(self, component: Component) -> Optional[float]:
         """
         Return the lower bound increment resulting from adding a
         component. If the lower bound is not defined after adding the
         component return None.
         """
-        raise NotImplementedError
-
+        if len(self.community_structure) < cast(Problem, self.problem).nnodes:
+            incr = 0.0
+            node_id, community_id = component.u, component.v
+            all_neighs = self.problem.neighbors[node_id]
+            for j in range(len(all_neighs)):
+                incr += self.problem.graph[node_id][all_neighs[j]]
+            return incr
+        else:
+            return 0
+    
     def perturb(self, ks: int) -> None:
         """
         Perturb the solution in place. The amount of perturbation is
@@ -299,10 +310,20 @@ class Problem:
         self.nnodes = len(graph)
         self.graph = graph
         
+        self.neighbors = {}
+        for i in range(self.nnodes):
+            self.neighbors[i] = []
+            row = self.graph[i]
+            for j in range(len(row)):
+                weight = row[j]
+                if weight != 0:
+                    self.neighbors[i].append(j)
+            self.neighbors[i] = sorted(self.neighbors[i], reverse=False)
+        
     @classmethod
     def from_textio(cls, f: str) -> Problem:
         """
-        Create a problem from a text I/O source `f`
+        Create a problem from the absolute path `f` containing the graph
         """
         with open(f, "r") as file:
             lines = file.readlines()
@@ -317,7 +338,6 @@ class Problem:
                 t += 1 
 
         return cls(graph)
-
 
     def empty_solution(self) -> Solution:
         """
@@ -345,8 +365,8 @@ if __name__ == '__main__':
                         choices=['bi', 'fi', 'ils', 'rls', 'sa', 'none'],
                         default='none')
     parser.add_argument('--lbudget', type=float, default=5.0)
-    parser.add_argument('--input-file', default=sys.stdin)
-    parser.add_argument('--output-file', default=sys.stdout)
+    parser.add_argument('--input-file')
+    parser.add_argument('--output-file')
     args = parser.parse_args()
 
     logging.basicConfig(stream=args.log_file,
@@ -388,14 +408,15 @@ if __name__ == '__main__':
 
     end = perf_counter()
 
-    if s is not None:
-        print(s.output(), file=args.output_file)
-        if s.objective() is not None:
-            logging.info(f"Objective: {s.objective():.3f}")
+    with open(args.output_file, "w") as file:    
+        if s is not None:
+            print(s.output(), file=file)
+            if s.objective() is not None:
+                logging.info(f"Objective: {s.objective():.3f}")
+            else:
+                logging.info(f"Objective: None")
         else:
-            logging.info(f"Objective: None")
-    else:
-        logging.info(f"Objective: no solution found")
+            logging.info(f"Objective: no solution found")
 
-    logging.info(f"Elapsed solving time: {end-start:.4f}")
+        logging.info(f"Elapsed solving time: {end-start:.4f}")
 
