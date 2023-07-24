@@ -109,5 +109,8 @@ if __name__ == '__main__':
 
     obj = evaluate(args.input_file, args.output_file)
     print("Objective value:", obj)
-
+    s = args.output_file
+    s = s.replace('.txt', '_obj.txt')
+    with open(s, 'w') as f:
+        f.write(str(obj))
 

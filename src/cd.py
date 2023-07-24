@@ -386,7 +386,7 @@ if __name__ == '__main__':
         elif args.csearch == 'beam':
             s = beam_search(s, 10)
         elif args.csearch == 'grasp':
-            s = grasp(s, args.cbudget, alpha = 0.01)
+            s = grasp(s, args.cbudget, alpha = 0.1)
         elif args.csearch == 'as':
             ants = [s]*100
             s = ant_system(ants, args.cbudget, beta = 5.0, rho = 0.5, tau0 = 1 / 3000.0)
